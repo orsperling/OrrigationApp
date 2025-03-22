@@ -11,10 +11,10 @@ from datetime import datetime
 from shapely.geometry import Point
 
 
-# Initialize Google Earth Engine
+# Initialize Google Earth Engine ddddd
 try:
     ee.Initialize()
-    print("✅ Google Earth Engine initialized!")
+    print("✅ Google Earth Engine initialized and Git!")
 except Exception as e:
     print(f"❌ Failed to initialize Earth Engine: {e}")
 
