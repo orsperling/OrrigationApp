@@ -20,21 +20,22 @@ except Exception as e:
 
 # 🌍 Function to Fetch NDVI from Google Earth Engine
 def get_ndvi(lat, lon):
-    poi = ee.Geometry.Point([lon, lat])
-    img = ee.ImageCollection('COPERNICUS/S2_HARMONIZED') \
-        .filterDate(f"{datetime.now().year-1}-05-01", f"{datetime.now().year-1}-06-01") \
-        .median()
+    # poi = ee.Geometry.Point([lon, lat])
+    # img = ee.ImageCollection('COPERNICUS/S2_HARMONIZED') \
+    #     .filterDate(f"{datetime.now().year-1}-05-01", f"{datetime.now().year-1}-06-01") \
+    #     .median()
     
-    ndvi = img.normalizedDifference(['B8', 'B4']).reduceRegion(
-        reducer=ee.Reducer.mean(),
-        geometry=poi,
-        scale=50
-    ).get('nd')
+    # ndvi = img.normalizedDifference(['B8', 'B4']).reduceRegion(
+    #     reducer=ee.Reducer.mean(),
+    #     geometry=poi,
+    #     scale=50
+    # ).get('nd')
     
-    try:
-        return round(ndvi.getInfo(), 2) if ndvi.getInfo() is not None else None
-    except Exception as e:
-        return None
+    # try:
+    #     return round(ndvi.getInfo(), 2) if ndvi.getInfo() is not None else None
+    # except Exception as e:
+    #     return None
+    return 0.7
 
 # 🌧️ Function to Fetch Weather Data (ET0 & Rain)
 def get_rain(lat, lon):
