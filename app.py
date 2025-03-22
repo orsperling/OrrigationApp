@@ -11,7 +11,7 @@ from datetime import datetime
 from shapely.geometry import Point
 
 
-# Initialize Google Earth Engine ddddd
+# Initialize Google Earth Engine
 try:
     ee.Initialize()
     print("✅ Google Earth Engine initialized and Git!")
