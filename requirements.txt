@@ -1,20 +1,20 @@
 altair==5.5.0
 attrs==25.3.0
 blinker==1.9.0
-boltons @ file:///home/conda/feedstock_root/build_artifacts/boltons_1677499911949/work
+boltons
 branca==0.8.1
-Brotli @ file:///Users/runner/miniforge3/conda-bld/brotli-split_1687884292427/work
+Brotli
 cachetools==5.5.2
 certifi==2025.1.31
-cffi @ file:///Users/runner/miniforge3/conda-bld/cffi_1671179893800/work
+cffi 
 charset-normalizer==3.4.1
 click==8.1.8
-colorama @ file:///home/conda/feedstock_root/build_artifacts/colorama_1666700638685/work
-conda @ file:///Users/runner/miniforge3/conda-bld/conda_1689351977509/work
-conda-package-handling @ file:///home/conda/feedstock_root/build_artifacts/conda-package-handling_1669907009957/work
-conda_package_streaming @ file:///home/conda/feedstock_root/build_artifacts/conda-package-streaming_1685101166527/work
+colorama 
+conda 
+conda-package-handling 
+conda_package_streaming 
 contourpy==1.3.1
-cryptography @ file:///Users/runner/miniforge3/conda-bld/cryptography-split_1689056134643/work
+cryptography 
 cycler==0.12.1
 earthengine-api==0.1.317
 folium==0.19.5
@@ -35,7 +35,7 @@ httplib2==0.22.0
 httplib2shim==0.0.3
 idna==3.10
 Jinja2==3.1.6
-jsonpatch @ file:///home/conda/feedstock_root/build_artifacts/jsonpatch_1632759296524/work
+jsonpatch 
 jsonpointer==2.0
 jsonschema==4.23.0
 jsonschema-specifications==2024.10.1
@@ -44,29 +44,29 @@ MarkupSafe==3.0.2
 matplotlib==3.10.1
 narwhals==1.31.0
 numpy==2.2.4
-packaging @ file:///home/conda/feedstock_root/build_artifacts/packaging_1681337016113/work
+packaging 
 pandas==2.2.3
 pillow==11.1.0
-pluggy @ file:///home/conda/feedstock_root/build_artifacts/pluggy_1687776318736/work
+pluggy 
 proto-plus==1.26.1
 protobuf==5.29.4
 pyarrow==19.0.1
 pyasn1==0.6.1
 pyasn1_modules==0.4.1
-pycosat @ file:///Users/runner/miniforge3/conda-bld/pycosat_1666836623787/work
-pycparser @ file:///home/conda/feedstock_root/build_artifacts/pycparser_1636257122734/work
+pycosat 
+pycparser 
 pydeck==0.9.1
-pyOpenSSL @ file:///home/conda/feedstock_root/build_artifacts/pyopenssl_1685514481738/work
+pyOpenSSL 
 pyparsing==3.2.1
-PySocks @ file:///home/conda/feedstock_root/build_artifacts/pysocks_1661604839144/work
+PySocks 
 python-dateutil==2.9.0.post0
 pytz==2025.1
 referencing==0.36.2
 requests==2.32.3
 rpds-py==0.23.1
 rsa==4.9
-ruamel.yaml @ file:///Users/runner/miniforge3/conda-bld/ruamel.yaml_1686993977949/work
-ruamel.yaml.clib @ file:///Users/runner/miniforge3/conda-bld/ruamel.yaml.clib_1670412881259/work
+ruamel.yaml 
+ruamel.yaml.clib 
 shapely==2.0.7
 six==1.17.0
 smmap==5.0.2
@@ -74,9 +74,9 @@ streamlit==1.43.2
 streamlit_folium==0.24.0
 tenacity==9.0.0
 toml==0.10.2
-toolz @ file:///home/conda/feedstock_root/build_artifacts/toolz_1657485559105/work
+toolz 
 tornado==6.4.2
-tqdm @ file:///home/conda/feedstock_root/build_artifacts/tqdm_1677948868469/work
+tqdm 
 typing_extensions==4.12.2
 tzdata==2025.1
 uritemplate==3.0.1
