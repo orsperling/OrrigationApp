@@ -6,10 +6,12 @@ import requests
 import ee
 import numpy as np
 import matplotlib.pyplot as plt
+
 from streamlit_folium import st_folium
 from datetime import datetime
 from shapely.geometry import Point
 
+st.set_page_config(layout='wide')
 
 # Initialize Google Earth Engine
 try:
@@ -20,22 +22,21 @@ except Exception as e:
 
 # 🌍 Function to Fetch NDVI from Google Earth Engine
 def get_ndvi(lat, lon):
-    # poi = ee.Geometry.Point([lon, lat])
-    # img = ee.ImageCollection('COPERNICUS/S2_HARMONIZED') \
-    #     .filterDate(f"{datetime.now().year-1}-05-01", f"{datetime.now().year-1}-06-01") \
-    #     .median()
+    poi = ee.Geometry.Point([lon, lat])
+    img = ee.ImageCollection('COPERNICUS/S2_HARMONIZED') \
+        .filterDate(f"{datetime.now().year-1}-05-01", f"{datetime.now().year-1}-06-01") \
+        .median()
     
-    # ndvi = img.normalizedDifference(['B8', 'B4']).reduceRegion(
-    #     reducer=ee.Reducer.mean(),
-    #     geometry=poi,
-    #     scale=50
-    # ).get('nd')
+    ndvi = img.normalizedDifference(['B8', 'B4']).reduceRegion(
+        reducer=ee.Reducer.mean(),
+        geometry=poi,
+        scale=50
+    ).get('nd')
     
-    # try:
-    #     return round(ndvi.getInfo(), 2) if ndvi.getInfo() is not None else None
-    # except Exception as e:
-    #     return None
-    return 0.7
+    try:
+        return round(ndvi.getInfo(), 2) if ndvi.getInfo() is not None else None
+    except Exception as e:
+        return None
 
 # 🌧️ Function to Fetch Weather Data (ET0 & Rain)
 def get_rain(lat, lon):
@@ -63,6 +64,44 @@ def get_rain(lat, lon):
     df_monthly = df.groupby(df['time'].dt.to_period("M")).agg({'rain': 'sum'}).reset_index()
     df_monthly['time'] = df_monthly['time'].dt.to_timestamp()  # Convert Period to Timestamp
     df_monthly['month'] = df_monthly['time'].dt.month
+
+    return df_monthly
+
+def get_rain_era5(lat, lon):
+    # Dates: from last Nov 1 to today
+    today = datetime.now()
+    year = today.year if today.month >= 11 else today.year - 1
+    start_date = datetime(year, 11, 1)
+
+    point = ee.Geometry.Point(lon, lat)
+
+    # ERA5-Land: daily total precipitation
+    collection = ee.ImageCollection("ECMWF/ERA5_LAND/DAILY_AGGR") \
+        .filterDate(start_date.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d")) \
+        .select("total_precipitation_sum")
+
+    # Extract daily values
+    def extract(img):
+        date = ee.Date(img.get("system:time_start")).format("YYYY-MM-dd")
+        rain = img.reduceRegion(
+            reducer=ee.Reducer.first(),
+            geometry=point,
+            scale=1000
+        ).get("total_precipitation_sum")
+        return ee.Feature(None, {"date": date, "rain": rain})
+
+    fc = ee.FeatureCollection(collection.map(extract))
+    dates = fc.aggregate_array("date").getInfo()
+    rains = fc.aggregate_array("rain").getInfo()
+
+    # DataFrame: convert and group
+    df = pd.DataFrame({"date": pd.to_datetime(dates), "rain": rains})
+    df["rain"] = pd.to_numeric(df["rain"], errors="coerce") * 1000  # meters → mm
+    df = df.dropna()
+
+    df["month"] = df["date"].dt.to_period("M")
+    df_monthly = df.groupby("month")["rain"].sum().reset_index()
+    df_monthly["month"] = df_monthly["month"].dt.month
 
     return df_monthly
 
@@ -97,6 +136,49 @@ def get_ET0(lat, lon):
     df_avg = df_monthly.groupby('month').agg({'ET0': 'mean'}).reset_index()
 
     return df_avg
+
+def get_et0_gridmet(lat, lon):
+    # 5 full years
+    today = datetime.now()
+    start_date = datetime(today.year - 5, 1, 1)
+    end_date = datetime(today.year - 1, 12, 31)
+
+    point = ee.Geometry.Point(lon, lat)
+
+    # Load GRIDMET ET₀ (etr in mm/day)
+    collection = ee.ImageCollection("IDAHO_EPSCOR/GRIDMET") \
+        .filterDate(start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")) \
+        .select("eto")
+
+    # Extract daily ET₀ and date
+    def extract(img):
+        date = ee.Date(img.get("system:time_start")).format("YYYY-MM-dd")
+        et0 = img.reduceRegion(
+            reducer=ee.Reducer.first(),
+            geometry=point,
+            scale=4000
+        ).get("eto")
+        return ee.Feature(None, {"date": date, "et0": et0})
+
+    fc = ee.FeatureCollection(collection.map(extract))
+    dates = fc.aggregate_array("date").getInfo()
+    et0_vals = fc.aggregate_array("et0").getInfo()
+
+    # Convert to DataFrame
+    df = pd.DataFrame({"date": pd.to_datetime(dates), "et0": et0_vals})
+    df["et0"] = pd.to_numeric(df["et0"], errors="coerce")
+    df = df.dropna()
+
+    # Group by month and year
+    df["year"] = df["date"].dt.year
+    df["month"] = df["date"].dt.month
+    df_monthly = df.groupby(["year", "month"])["et0"].sum().reset_index()
+
+    # Now get average ET₀ per calendar month across years
+    avg_monthly_et0 = df_monthly.groupby("month")["et0"].mean().reset_index()
+    avg_monthly_et0.rename(columns={"et0": "ET0"}, inplace=True)
+
+    return avg_monthly_et0
 
 # 🌍 Interactive Map for Coordinate Selection
 def display_map():
@@ -185,7 +267,6 @@ with col1:
     # 🗺️ **Map Selection**
     map_data = display_map()
 
-
 with col2:
     if map_data and isinstance(map_data, dict) and 'last_clicked' in map_data and isinstance(map_data['last_clicked'], dict):
         
@@ -195,9 +276,9 @@ with col2:
         # st.write(f"📍 Selected Location: **{lat:.2f}, {lon:.2f}**")
         
         # 📊 Fetch and Process Data
-        rain = get_rain(lat, lon)
+        rain = get_rain_era5(lat, lon)
         ndvi = get_ndvi(lat, lon)
-        et0=get_ET0(lat, lon)
+        et0=get_et0_gridmet(lat, lon)
 
         total_rain = rain['rain'].sum()* 0.04
         m_rain = st.sidebar.slider("Fix Rain to Field", 0, 40, int(total_rain), step=1, disabled=True)
