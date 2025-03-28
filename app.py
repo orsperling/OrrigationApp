@@ -182,27 +182,44 @@ def get_et0_gridmet(lat, lon):
 
 # 🌍 Interactive Map for Coordinate Selection
 def display_map():
-    
-    # Map options
-    map_types = {
-        "Satellite": "Esri.WorldImagery",
-        "Street Map": "OpenStreetMap"
-    }
+    # Center and zoom
+    map_center = [35.24736288352025, -119.18877345475644]
+    zoom = 14
 
-    # User selects map type
-    selected_map = st.selectbox("Select Map Type:", list(map_types.keys()))
+    # Create base map with no tiles
+    m = folium.Map(location=map_center, zoom_start=zoom, tiles=None)
 
-    # Default map center (California)
-    map_center = [35.261723, -119.177502]
+    # Satellite base layer
+    folium.TileLayer(
+        tiles="https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        attr="Esri World Imagery",
+        name="Satellite",
+        overlay=False,
+        control=False
+    ).add_to(m)
 
-    # Create Folium map with the selected map type
-    m = folium.Map(location=map_center, zoom_start=14, tiles=map_types[selected_map])
+    # Transparent place labels (cities, landmarks)
+    folium.TileLayer(
+        tiles="https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
+        attr="Esri Boundaries & Labels",
+        name="Place Labels",
+        overlay=True,
+        control=False
+    ).add_to(m)
 
-    # Display the map in Streamlit
-    return st_folium(m)#, height=700, width=700)
+    # Transparent road overlay (includes road numbers!)
+    folium.TileLayer(
+        tiles="https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}",
+        attr="Esri Transportation",
+        name="Roads",
+        overlay=True,
+        control=False
+    ).add_to(m)
+
+    return st_folium(m, height=600, width=900)
 
 # 📊 Function to Calculate Irrigation
-def calc_irrigation():
+def calc_irrigation(ndvi, rain, et0, m_winter, irrigation_months):
 
     df=et0
     df['NDVI'] = ndvi
@@ -211,8 +228,8 @@ def calc_irrigation():
     mnts=list(range(irrigation_months[0], irrigation_months[1] + 1))
 
     df.loc[~df['month'].isin(range(3, 11)), 'ET0'] = 0  # Zero ET0 for non-growing months
-    df['rain'] *= 0.03937  # Convert rain to inches
-    df['ET0'] *= 0.03937 * 0.9  # Convert ET0 to inches with 90% efficiency
+    df['rain'] *= conversion_factor  # Convert rain to inches
+    df['ET0'] *= conversion_factor * 0.9  # Convert ET0 to inches with 90% efficiency
 
     # Adjust ET1 based on NDVI
     df['ET1'] = df['ET0'] * df['NDVI'] / 0.7
@@ -223,7 +240,7 @@ def calc_irrigation():
     df.loc[df['month'] == 2, 'rain1'] += m_winter  # Winter irrigation
 
     # # Soil water balance
-    SWI = (df['rain1'].sum() - df.loc[~df['month'].isin(mnts), 'ET1'].sum() - 2) / len(mnts)
+    SWI = (df['rain1'].sum() - df.loc[~df['month'].isin(mnts), 'ET1'].sum() - 50 * conversion_factor) / len(mnts)
 
     df.loc[df['month'].isin(mnts), 'irrigation'] = df['ET1'] - SWI
     df['irrigation'] = df['irrigation'].clip(lower=0)
@@ -241,24 +258,16 @@ def calc_irrigation():
 
 # 🌟 **Streamlit UI**
 #st.title("California Almond Calculator")
-
 # 📌 **User Inputs**
+# 🌍 Unit system selection
+unit_system = st.sidebar.radio("Select Units", ["Imperial (inches)", "Metric (mm)"])
+
+unit_label = "inches" if "Imperial" in unit_system else "mm"
+conversion_factor = 0.03937 if "Imperial" in unit_system else 1
+
 st.sidebar.subheader("Farm Data")
-# m_rain = st.sidebar.slider("Fix Rain to Field", 0, 40, 10, step=1)
-m_winter = st.sidebar.slider("Winter Irrigation", 0, 40, 0, step=1)
-irrigation_months = st.sidebar.slider("Irrigation Months", 1, 12, (datetime.now().month + 1, 10), step=1)
-
-# total_irrigation = (1450*ndvi/.7-rain['rain'].sum()+40)*.04
-# m_irrigation = st.sidebar.slider("Water Allocation", 0, 70, int(total_irrigation), step=5)
-
-
-# if "m_rain" not in st.session_state:
-#     st.session_state["m_rain"] = 0  
-
-# # 📌 Sidebar Slider for Irrigation Months (Reactive to Map Click)
-# m_rain = st.sidebar.slider(
-#     "Fix Rain", 0, 40, st.session_state["m_rain"], step=1
-# )
+#m_winter = st.sidebar.slider("Winter Irrigation", 0, 40, 0, step=1)
+#irrigation_months = st.sidebar.slider("Irrigation Months", 1, 12, (datetime.now().month + 1, 10), step=1)
 
 # Layout: 2 columns (map | output)
 col1, col2 = st.columns([3, 5])
@@ -268,47 +277,71 @@ with col1:
     map_data = display_map()
 
 with col2:
-    if map_data and isinstance(map_data, dict) and 'last_clicked' in map_data and isinstance(map_data['last_clicked'], dict):
-        
-        coords = map_data['last_clicked']
-        lat, lon = coords['lat'], coords['lng']
+    
+    # --- Sliders (trigger irrigation calc only)
+    m_winter = st.sidebar.slider("Winter Irrigation", 0, int(round(700 * conversion_factor)), 0, step=int(round(20 * conversion_factor)))
+    irrigation_months = st.sidebar.slider("Irrigation Months", 1, 12, (datetime.now().month+1, 10), step=1)
 
-        # st.write(f"📍 Selected Location: **{lat:.2f}, {lon:.2f}**")
-        
-        # 📊 Fetch and Process Data
-        rain = get_rain_era5(lat, lon)
-        ndvi = get_ndvi(lat, lon)
-        et0=get_et0_gridmet(lat, lon)
+    # --- Handle map click
+    if map_data and isinstance(map_data, dict) and "last_clicked" in map_data:
+        coords = map_data["last_clicked"]
 
-        total_rain = rain['rain'].sum()* 0.04
-        m_rain = st.sidebar.slider("Fix Rain to Field", 0, 40, int(total_rain), step=1, disabled=True)
+        # ✅ Only proceed if coords is valid
+        if coords and "lat" in coords and "lng" in coords:
+            lat, lon = coords["lat"], coords["lng"]
+            location = (round(lat, 5), round(lon, 5))
 
-        if lat is not None and lon is not None:
+            # Check if location changed
+            location_changed = st.session_state.get("last_location") != location
 
-            df_irrigation = calc_irrigation()
-            # st.write("NDVI is: ", ndvi, " ; ET0 is", df_irrigation["ET0"].sum().round(0), " ; Irrigation is", df_irrigation["irrigation"].sum().round(0))
-            
-            total_irrigation = df_irrigation['irrigation'].sum()
-            m_irrigation = st.sidebar.slider("Water Allocation", 0, 70, int(total_irrigation), step=5, disabled=True)
+            if location_changed:
+                st.session_state["last_location"] = location
+                st.session_state["rain"] = get_rain_era5(lat, lon)
+                st.session_state["ndvi"] = get_ndvi(lat, lon)
+                st.session_state["et0"] = get_et0_gridmet(lat, lon)
 
-            # 📈 Plot Data
-            # st.subheader("Irrigation & Soil Water Balance")
-            fig, ax = plt.subplots()
-            ax.bar(df_irrigation['month'], df_irrigation['irrigation'], color='blue', alpha=0.5, label="Irrigation")
-            ax.plot(df_irrigation['month'], df_irrigation['SW1'], marker='o', linestyle='-', color='red', label="Soil Water Balance (SW)")
+            # Retrieve stored values
+            rain = st.session_state.get("rain")
+            ndvi = st.session_state.get("ndvi")
+            et0 = st.session_state.get("et0")
 
-            ax.set_title(f"NDVI is: {ndvi:.2f} ; ET0 is {df_irrigation['ET0'].sum():.0f} ; Irrigation is {df_irrigation['irrigation'].sum():.0f}")
-            ax.set_xlabel("Month")
-            ax.set_ylabel("Irrigation (inches)")
-            ax.legend()
-            st.pyplot(fig)
+            if rain is not None and ndvi is not None and et0 is not None:
+                total_rain = rain['rain'].sum() * conversion_factor
+                m_rain = st.sidebar.slider("Fix Rain to Field", 0, int(round(1000 * conversion_factor)), int(total_rain), step=1, disabled=True)
 
-            df_irrigation['week_irrigation']=df_irrigation['irrigation']/4
+                # 🔄 Always recalculate irrigation when sliders or location change
+                df_irrigation = calc_irrigation(ndvi, rain, et0, m_winter, irrigation_months)
 
-            # 📊 Display Table
-            # st.subheader("Irrigation Table")
-            st.dataframe(df_irrigation[['month', 'ET0', 'week_irrigation']].round(1))
+                total_irrigation = df_irrigation['irrigation'].sum()
+                m_irrigation = st.sidebar.slider("Water Allocation", 0, int(round(1500 * conversion_factor)), int(total_irrigation), step=5, disabled=True)
 
+                # 📈 Plot
+                fig, ax = plt.subplots()
+                ax.bar(df_irrigation['month'], df_irrigation['irrigation'], color='blue', alpha=0.5, label="Irrigation")
+                ax.plot(df_irrigation['month'], df_irrigation['SW1'], marker='o', linestyle='-', color='red', label="Soil Water Balance (SW)")
+                ax.set_title(f"NDVI: {ndvi:.2f} | ET₀: {df_irrigation['ET0'].sum():.0f} | Irrigation: {total_irrigation:.0f}")
+                ax.set_xlabel("Month")
+                ax.set_ylabel("Irrigation")
+                ax.legend()
+                st.pyplot(fig)
+
+                # 📊 Table
+                df_irrigation['week_irrigation'] = df_irrigation['irrigation'] / 4
+
+                # Filter by selected irrigation months
+                start_month, end_month = irrigation_months
+                filtered_df = df_irrigation[df_irrigation['month'].between(start_month, end_month)]
+
+                # Show only monthly ET₀ and irrigation totals
+                filtered_df.index = [''] * len(filtered_df)
+                st.dataframe(filtered_df[['month', 'ET0', 'week_irrigation']].round(1))
+
+            else:
+                st.error("❌ No weather data found for this location.")
         else:
-            st.error("❌ No weather data found for this location.")
+            st.info("🖱️ Click a location on the map to begin.")
+    else:
+        st.info("🖱️ Click a location on the map to begin.")
+
+
 
