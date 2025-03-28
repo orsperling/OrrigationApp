@@ -292,7 +292,12 @@ with col2:
             location = (round(lat, 5), round(lon, 5))
 
             # Check if location changed
-            location_changed = st.session_state.get("last_location") != location
+            import time
+            now = time.time()
+            last_loc = st.session_state.get("last_location")
+            last_time = st.session_state.get("last_location_time", 0)
+
+            location_changed = (last_loc != location) and (now - last_time > 5)
 
             if location_changed:
                 st.session_state["last_location"] = location
