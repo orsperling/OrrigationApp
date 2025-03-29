@@ -68,7 +68,7 @@ def get_rain(lat, lon):
 
     return df_monthly
 
-def get_rain_era5(lat, lon):
+def get_day_rain_era5(lat, lon):
     # Dates: from last Nov 1 to today
     today = datetime.now()
     year = today.year if today.month >= 11 else today.year - 1
@@ -91,12 +91,15 @@ def get_rain_era5(lat, lon):
         ).get("total_precipitation_sum")
         return ee.Feature(None, {"date": date, "rain": rain})
 
-    fc = ee.FeatureCollection(collection.map(extract))
-    dates = fc.aggregate_array("date").getInfo()
-    rains = fc.aggregate_array("rain").getInfo()
+    # Map and get all features in one call
+    features = ee.FeatureCollection(collection.map(extract)).getInfo()["features"]
 
-    # DataFrame: convert and group
-    df = pd.DataFrame({"date": pd.to_datetime(dates), "rain": rains})
+    # Extract properties into a list of dicts
+    data = [{"date": f["properties"]["date"], "rain": f["properties"]["rain"]} for f in features]
+
+    # Convert to DataFrame
+    df = pd.DataFrame(data)
+    df["date"] = pd.to_datetime(df["date"])
     df["rain"] = pd.to_numeric(df["rain"], errors="coerce") * 1000  # meters → mm
     df = df.dropna()
 
@@ -105,6 +108,54 @@ def get_rain_era5(lat, lon):
     df_monthly["month"] = df_monthly["month"].dt.month
 
     return df_monthly
+
+def get_rain_era5(lat, lon):
+    import ee
+    import pandas as pd
+    from datetime import datetime
+
+    # Dates
+    today = datetime.now()
+    year = today.year if today.month >= 11 else today.year - 1
+    start_date = datetime(year, 11, 1)
+
+    point = ee.Geometry.Point(lon, lat)
+
+    # Create list of monthly date ranges
+    start = ee.Date(start_date.strftime("%Y-%m-%d"))
+    end = ee.Date(today.strftime("%Y-%m-%d"))
+    months = ee.List.sequence(0, end.difference(start, 'month'))
+
+    def monthly_sum(n):
+        start_month = start.advance(n, 'month')
+        end_month = start_month.advance(1, 'month')
+        monthly_img = ee.ImageCollection("ECMWF/ERA5_LAND/DAILY_AGGR") \
+            .filterDate(start_month, end_month) \
+            .select("total_precipitation_sum") \
+            .sum()
+        value = monthly_img.reduceRegion(
+            reducer=ee.Reducer.first(),
+            geometry=point,
+            scale=1000
+        ).get("total_precipitation_sum")
+        return ee.Feature(None, {
+            "month": start_month.format("M"),
+            "rain": value
+        })
+
+    # Map over months and convert to FeatureCollection
+    fc = ee.FeatureCollection(months.map(monthly_sum))
+
+    # Download features to local
+    features = fc.getInfo()["features"]
+    data = [{"month": int(f["properties"]["month"]), "rain": f["properties"]["rain"]} for f in features]
+
+    # Build DataFrame
+    df = pd.DataFrame(data)
+    df["rain"] = pd.to_numeric(df["rain"], errors="coerce") * 1000  # meters → mm
+    df = df.dropna()
+
+    return df.sort_values("month").reset_index(drop=True)
 
 def get_ET0(lat, lon):
     # Calculate start date (5 years ago from today)
@@ -138,7 +189,7 @@ def get_ET0(lat, lon):
 
     return df_avg
 
-def get_et0_gridmet(lat, lon):
+def get_day_et0_gridmet(lat, lon):
     from datetime import datetime
     import pandas as pd
     import ee
@@ -169,18 +220,16 @@ def get_et0_gridmet(lat, lon):
 
     # Attempt to get data
     try:
-        dates = fc.aggregate_array("date").getInfo()
-        et0_vals = fc.aggregate_array("et0").getInfo()
+        features = fc.getInfo()["features"]
+        data = [{"date": f["properties"]["date"], "et0": f["properties"]["et0"]} for f in features]
     except Exception:
         return None  # Something went wrong (e.g. no data)
 
-    # Return None if no usable data
-    if not dates or not et0_vals or all(v is None for v in et0_vals):
-        return None
-
     # Convert to DataFrame
-    df = pd.DataFrame({"date": pd.to_datetime(dates), "et0": et0_vals})
+    df = pd.DataFrame(data)
+    df["date"] = pd.to_datetime(df["date"])
     df["et0"] = pd.to_numeric(df["et0"], errors="coerce")
+
     df = df.dropna()
 
     if df.empty:
@@ -197,6 +246,68 @@ def get_et0_gridmet(lat, lon):
 
     return avg_monthly_et0
 
+def get_et0_gridmet(lat, lon):
+    from datetime import datetime
+    import pandas as pd
+    import ee
+
+    today = datetime.now()
+    start_date = datetime(today.year - 5, 1, 1)
+    end_date = datetime(today.year - 1, 12, 31)
+
+    point = ee.Geometry.Point(lon, lat)
+
+    # Start and end as ee.Date
+    start = ee.Date(start_date.strftime("%Y-%m-%d"))
+    end = ee.Date(end_date.strftime("%Y-%m-%d"))
+
+    # Create monthly steps (5 full years = 60 months)
+    month_count = end.difference(start, 'month')
+    months = ee.List.sequence(0, month_count.subtract(1))
+
+    def monthly_sum(n):
+        start_month = start.advance(n, 'month')
+        end_month = start_month.advance(1, 'month')
+        monthly_img = ee.ImageCollection("IDAHO_EPSCOR/GRIDMET") \
+            .filterDate(start_month, end_month) \
+            .select("eto") \
+            .sum()
+
+        value = monthly_img.reduceRegion(
+            reducer=ee.Reducer.first(),
+            geometry=point,
+            scale=4000
+        ).get("eto")
+
+        return ee.Feature(None, {
+            "month": start_month.format("M"),
+            "year": start_month.format("Y"),
+            "et0": value
+        })
+
+    # Map and fetch features
+    fc = ee.FeatureCollection(months.map(monthly_sum))
+
+    try:
+        features = fc.getInfo()["features"]
+        data = [{"month": int(f["properties"]["month"]),
+                 "year": int(f["properties"]["year"]),
+                 "et0": f["properties"]["et0"]} for f in features]
+    except Exception:
+        return None
+
+    df = pd.DataFrame(data)
+    df["et0"] = pd.to_numeric(df["et0"], errors="coerce")
+    df = df.dropna()
+
+    if df.empty:
+        return None
+
+    # Average ET0 per calendar month over the years
+    avg_monthly_et0 = df.groupby("month")["et0"].mean().reset_index()
+    avg_monthly_et0.rename(columns={"et0": "ET0"}, inplace=True)
+
+    return avg_monthly_et0
 
 # 🌍 Interactive Map for Coordinate Selection
 def display_map():
@@ -356,7 +467,7 @@ with col2:
 
                 # Show only monthly ET₀ and irrigation totals
                 filtered_df.index = [''] * len(filtered_df)
-                st.dataframe(filtered_df[['month', 'ET0', 'week_irrigation']].round(1))
+                st.dataframe(filtered_df[['month', 'ET0', 'week_irrigation', 'alert']].round(1))
 
             else:
                 st.error("❌ No weather data found for this location.")
