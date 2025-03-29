@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 from streamlit_folium import st_folium
 from datetime import datetime
 from shapely.geometry import Point
+import time
 
 st.set_page_config(layout='wide')
 
@@ -138,6 +139,10 @@ def get_ET0(lat, lon):
     return df_avg
 
 def get_et0_gridmet(lat, lon):
+    from datetime import datetime
+    import pandas as pd
+    import ee
+
     # 5 full years
     today = datetime.now()
     start_date = datetime(today.year - 5, 1, 1)
@@ -161,24 +166,37 @@ def get_et0_gridmet(lat, lon):
         return ee.Feature(None, {"date": date, "et0": et0})
 
     fc = ee.FeatureCollection(collection.map(extract))
-    dates = fc.aggregate_array("date").getInfo()
-    et0_vals = fc.aggregate_array("et0").getInfo()
+
+    # Attempt to get data
+    try:
+        dates = fc.aggregate_array("date").getInfo()
+        et0_vals = fc.aggregate_array("et0").getInfo()
+    except Exception:
+        return None  # Something went wrong (e.g. no data)
+
+    # Return None if no usable data
+    if not dates or not et0_vals or all(v is None for v in et0_vals):
+        return None
 
     # Convert to DataFrame
     df = pd.DataFrame({"date": pd.to_datetime(dates), "et0": et0_vals})
     df["et0"] = pd.to_numeric(df["et0"], errors="coerce")
     df = df.dropna()
 
+    if df.empty:
+        return None  # Still no usable data
+
     # Group by month and year
     df["year"] = df["date"].dt.year
     df["month"] = df["date"].dt.month
     df_monthly = df.groupby(["year", "month"])["et0"].sum().reset_index()
 
-    # Now get average ET₀ per calendar month across years
+    # Monthly average ET0 across years
     avg_monthly_et0 = df_monthly.groupby("month")["et0"].mean().reset_index()
     avg_monthly_et0.rename(columns={"et0": "ET0"}, inplace=True)
 
     return avg_monthly_et0
+
 
 # 🌍 Interactive Map for Coordinate Selection
 def display_map():
@@ -292,7 +310,6 @@ with col2:
             location = (round(lat, 5), round(lon, 5))
 
             # Check if location changed
-            import time
             now = time.time()
             last_loc = st.session_state.get("last_location")
             last_time = st.session_state.get("last_location_time", 0)
