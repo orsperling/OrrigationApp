@@ -111,51 +111,34 @@ def get_day_rain_era5(lat, lon):
 
 def get_rain_era5(lat, lon):
     import ee
-    import pandas as pd
     from datetime import datetime
 
-    # Dates
+    # Define date range
     today = datetime.now()
-    year = today.year if today.month >= 11 else today.year - 1
-    start_date = datetime(year, 11, 1)
+    start_year = today.year if today.month >= 11 else today.year - 1
+    start = f"{start_year}-11-01"
+    end = today.strftime("%Y-%m-%d")
 
+    # Define location
     point = ee.Geometry.Point(lon, lat)
 
-    # Create list of monthly date ranges
-    start = ee.Date(start_date.strftime("%Y-%m-%d"))
-    end = ee.Date(today.strftime("%Y-%m-%d"))
-    months = ee.List.sequence(0, end.difference(start, 'month'))
+    # Get total precipitation image
+    rain_sum = ee.ImageCollection("ECMWF/ERA5_LAND/DAILY_AGGR") \
+        .filterDate(start, end) \
+        .select("total_precipitation_sum") \
+        .sum()
 
-    def monthly_sum(n):
-        start_month = start.advance(n, 'month')
-        end_month = start_month.advance(1, 'month')
-        monthly_img = ee.ImageCollection("ECMWF/ERA5_LAND/DAILY_AGGR") \
-            .filterDate(start_month, end_month) \
-            .select("total_precipitation_sum") \
-            .sum()
-        value = monthly_img.reduceRegion(
+    # Reduce to value at point
+    try:
+        rain_mm = rain_sum.reduceRegion(
             reducer=ee.Reducer.first(),
             geometry=point,
             scale=1000
-        ).get("total_precipitation_sum")
-        return ee.Feature(None, {
-            "month": start_month.format("M"),
-            "rain": value
-        })
+        ).get("total_precipitation_sum").getInfo()
 
-    # Map over months and convert to FeatureCollection
-    fc = ee.FeatureCollection(months.map(monthly_sum))
-
-    # Download features to local
-    features = fc.getInfo()["features"]
-    data = [{"month": int(f["properties"]["month"]), "rain": f["properties"]["rain"]} for f in features]
-
-    # Build DataFrame
-    df = pd.DataFrame(data)
-    df["rain"] = pd.to_numeric(df["rain"], errors="coerce") * 1000  # meters → mm
-    df = df.dropna()
-
-    return df.sort_values("month").reset_index(drop=True)
+        return rain_mm * 1000  # Convert meters to mm
+    except Exception:
+        return None
 
 def get_ET0(lat, lon):
     # Calculate start date (5 years ago from today)
@@ -312,8 +295,8 @@ def get_et0_gridmet(lat, lon):
 # 🌍 Interactive Map for Coordinate Selection
 def display_map():
     # Center and zoom
-    map_center = [35.24736288352025, -119.18877345475644]
-    zoom = 14
+    map_center = [35.26, -119.15]
+    zoom = 13
 
     # Create base map with no tiles
     m = folium.Map(location=map_center, zoom_start=zoom, tiles=None)
@@ -348,42 +331,39 @@ def display_map():
     return st_folium(m, height=600, width=900)
 
 # 📊 Function to Calculate Irrigation
-def calc_irrigation(ndvi, rain, et0, m_winter, irrigation_months):
+def calc_irrigation(ndvi, rain, et0, m_winter, irrigation_months, irrigation_factor):
 
-    df=et0
-    df['NDVI'] = ndvi
-    df=pd.merge(df, rain[['month', 'rain']], on='month', how='outer')
+    df = et0.copy()
+
+    NDVI = ndvi
+    rain1=rain*conversion_factor+m_winter
+  
+    if NDVI < 0.67: NDVI *= 1.05
 
     mnts=list(range(irrigation_months[0], irrigation_months[1] + 1))
 
     df.loc[~df['month'].isin(range(3, 11)), 'ET0'] = 0  # Zero ET0 for non-growing months
-    df['rain'] *= conversion_factor  # Convert rain to inches
-    df['ET0'] *= conversion_factor * 0.9  # Convert ET0 to inches with 90% efficiency
+    df['ET0'] *= conversion_factor * 0.8  # Convert ET0 to inches with 90% efficiency
 
     # Adjust ET1 based on NDVI
-    df['ET1'] = df['ET0'] * df['NDVI'] / 0.7
-    df.loc[df['NDVI'] * 1.05 < 0.7, 'ET1'] = df['ET0'] * df['NDVI'] * 1.05 / 0.7
-
-    # Adjust rainfall
-    df['rain1'] = df['rain']# * m_rain / df['rain'].sum()
-    df.loc[df['month'] == 2, 'rain1'] += m_winter  # Winter irrigation
-
+    df['ET1'] = df['ET0'] * NDVI / 0.7
+    
     # # Soil water balance
-    SWI = (df['rain1'].sum() - df.loc[~df['month'].isin(mnts), 'ET1'].sum() - 50 * conversion_factor) / len(mnts)
+    SWI = (rain1 - df.loc[~df['month'].isin(mnts), 'ET1'].sum() - 50 * conversion_factor) / len(mnts)
 
     df.loc[df['month'].isin(mnts), 'irrigation'] = df['ET1'] - SWI
     df['irrigation'] = df['irrigation'].clip(lower=0)
     df['irrigation'] = df['irrigation'].fillna(0)
+    df["irrigation"] *= irrigation_factor
 
     vst = df.loc[df['month'] == 7, 'irrigation'] * 0.1
     df.loc[df['month'] == 7, 'irrigation'] *= 0.8
     df.loc[df['month'].isin([8, 9]), 'irrigation'] += vst.values[0] if not vst.empty else 0
 
-    # df['irrigation'] *= m_irrigation / df['irrigation'].sum()
-    df['SW1'] = df['rain1'].sum()-df['ET1'].cumsum()+df['irrigation'].cumsum()
+    df['SW1'] = rain1-df['ET1'].cumsum()+df['irrigation'].cumsum()
     df['alert'] = np.where(df['SW1'] < 0, 'drought', 'safe')
 
-    return df#[['time', 'ET0', 'ET1', 'rain', 'rain1', 'irrigation', 'SW0', 'SW1', 'alert']]
+    return df
 
 # 🌟 **Streamlit UI**
 #st.title("California Almond Calculator")
@@ -439,19 +419,30 @@ with col2:
             et0 = st.session_state.get("et0")
 
             if rain is not None and ndvi is not None and et0 is not None:
-                total_rain = rain['rain'].sum() * conversion_factor
+                total_rain = rain * conversion_factor
                 m_rain = st.sidebar.slider("Fix Rain to Field", 0, int(round(1000 * conversion_factor)), int(total_rain), step=1, disabled=True)
 
                 # 🔄 Always recalculate irrigation when sliders or location change
-                df_irrigation = calc_irrigation(ndvi, rain, et0, m_winter, irrigation_months)
+                df_irrigation = calc_irrigation(ndvi, rain, et0, m_winter, irrigation_months, 1)
 
                 total_irrigation = df_irrigation['irrigation'].sum()
-                m_irrigation = st.sidebar.slider("Water Allocation", 0, int(round(1500 * conversion_factor)), int(total_irrigation), step=5, disabled=True)
+                m_irrigation = st.sidebar.slider("Water Allocation", 0, int(round(1500 * conversion_factor)), int(total_irrigation), step=int(round(20 * conversion_factor)))
+
+                irrigation_factor=m_irrigation/total_irrigation
+                
+                # ✅ Adjust ET0 in the table
+                df_irrigation = calc_irrigation(ndvi, rain, et0, m_winter, irrigation_months, irrigation_factor)
+                total_irrigation = df_irrigation['irrigation'].sum()
 
                 # 📈 Plot
                 fig, ax = plt.subplots()
                 ax.bar(df_irrigation['month'], df_irrigation['irrigation'], color='blue', alpha=0.5, label="Irrigation")
-                ax.plot(df_irrigation['month'], df_irrigation['SW1'], marker='o', linestyle='-', color='red', label="Soil Water Balance (SW)")
+                ax.plot(df_irrigation['month'], df_irrigation['SW1'], marker='o', linestyle='-', color='green', label="Soil Water")
+                # Red overlay where SW1 < 0
+                df_below_zero = df_irrigation[df_irrigation['SW1'] < 0]
+                if not df_below_zero.empty:
+                    ax.plot(df_below_zero['month'], df_below_zero['SW1'], marker='o', linestyle='None', color='red', label="Drought")
+
                 ax.set_title(f"NDVI: {ndvi:.2f} | ET₀: {df_irrigation['ET0'].sum():.0f} | Irrigation: {total_irrigation:.0f}")
                 ax.set_xlabel("Month")
                 ax.set_ylabel("Irrigation")
